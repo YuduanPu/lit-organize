@@ -42,16 +42,34 @@ This outputs JSON with:
 For each new PDF, using the scan output:
 1. **Correct metadata** if the script got it wrong (title, authors, year, source). The `raw_text_preview` field contains the first ~800 chars of extracted text — use this to verify and fix.
 2. **Determine type**: Journal Article / Working Paper / Primary Source / Book / Book Chapter / Government Report / Other. For primary sources (archival documents, census records, government reports, first-hand materials), set Source to the archive or institution name.
-3. **Fill key points** by reading the text preview:
-   - Research Question / Topic
-   - Methodology (e.g., DID, IV, RDD, descriptive, archival)
-   - Key Findings
-   - Data Sources Used
-   - Theory/Framework
-   - Geographic Focus
-   - Time Period
+3. **Fill key points** using the targeted reading strategy below.
 
-**When the `raw_text_preview` is insufficient** (empty, garbled, or missing key details like methodology/findings), use the `anthropic-skills:pdf-reading` skill to read the PDF efficiently rather than loading the entire file into context. This is common with older journals, scanned documents, or PDFs without embedded text. Only invoke the pdf-reading skill for the specific PDFs that need it — most papers will have enough in the preview.
+### Targeted reading strategy for key points
+
+Reading entire papers wastes tokens. Instead, use a tiered approach:
+
+**Tier 1 — Abstract + Introduction + Conclusion (default for journal articles and working papers)**:
+Use the `anthropic-skills:pdf-reading` skill to read only pages 1–3 and the last 2 pages of the PDF. In economics papers, this covers:
+- Abstract → methodology, key findings, data sources
+- Introduction → research question, contribution, theory/framework
+- Conclusion → geographic focus, time period, summary of results
+
+This is ~3,000–5,000 tokens per paper vs 20,000+ for the full paper. Use this for every journal article and working paper.
+
+**Tier 2 — Full reading (only when Tier 1 is insufficient)**:
+Read the full paper only for:
+- **Primary sources** (parliamentary testimony, archival documents, government reports) — these have no abstract or standard structure
+- **Methodology papers** where the empirical strategy details (e.g., exact IV construction, RDD bandwidth) are buried in the middle sections and the abstract is too vague
+- **Papers where Tier 1 left key fields blank** — if you can't determine the methodology or key findings from the abstract+intro+conclusion, read sections 3–4 as well
+
+**Key points to extract**:
+- Research Question / Topic
+- Methodology (e.g., DID, IV, RDD, descriptive, archival, survival analysis)
+- Key Findings (specific numbers when available — e.g., "20pp employment gap" not just "significant effect")
+- Data Sources Used
+- Theory/Framework
+- Geographic Focus
+- Time Period
 
 Present all entries to the user for review before proceeding.
 
