@@ -145,7 +145,7 @@ Do NOT re-process previously organized files. Do NOT rename files that are alrea
 | Year                      | Publication year                                                                                   |
 | Source                    | Journal, archive, or working paper series                                                          |
 | Type                      | Journal Article / Working Paper / Primary Source / Book / Book Chapter / Government Report / Other |
-| Literature Stream(s)      | Comma-separated streams                                                                            |
+| Literature Stream(s)      | Pipe-separated streams (e.g., "Stream A \| Stream B") — uses ` \| ` not `,` to allow commas in stream names |
 | Research Question / Topic | Main research question                                                                             |
 | Methodology               | Empirical strategy (DID, IV, RDD, descriptive, archival, etc.)                                     |
 | Key Findings              | Summary of main results                                                                            |

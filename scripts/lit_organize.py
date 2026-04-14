@@ -344,17 +344,43 @@ def check_deletions(folder: str, project: str):
     if not deleted:
         return []
 
-    # Mark deleted in spreadsheet
+    # Collect bibtex keys of deleted entries for .bib cleanup
+    deleted_bib_keys = set()
+    for entry in state.get("entries", []):
+        if entry.get("file_path") in deleted and entry.get("bibtex_key"):
+            deleted_bib_keys.add(entry["bibtex_key"])
+
+    # Mark deleted in spreadsheet: gray out row, clear file path, mark notes
     wb = openpyxl.load_workbook(xlsx_path)
-    ws = wb.active
-    for row in range(2, ws.max_row + 1):
-        fp = ws.cell(row=row, column=18).value  # File Path column
-        if fp in deleted:
-            notes = ws.cell(row=row, column=20).value or ""
-            if "DELETED" not in notes:
-                ws.cell(row=row, column=20, value=f"DELETED. {notes}".strip())
+    gray_font = Font(color="999999", strikethrough=True)
+    for sheet in wb.worksheets:
+        for row in range(2, sheet.max_row + 1):
+            fp = sheet.cell(row=row, column=18).value  # File Path column
+            if fp in deleted:
+                # Mark Notes
+                notes = sheet.cell(row=row, column=20).value or ""
+                if "DELETED" not in notes:
+                    sheet.cell(row=row, column=20, value=f"DELETED. {notes}".strip())
+                # Clear file path
+                sheet.cell(row=row, column=18, value="")
+                # Gray out + strikethrough entire row
+                for col in range(1, len(SPREADSHEET_COLUMNS) + 1):
+                    sheet.cell(row=row, column=col).font = gray_font
 
     wb.save(xlsx_path)
+
+    # Remove deleted entries from .bib file
+    if deleted_bib_keys:
+        bib_path = os.path.join(folder, f"{project}_literature.bib")
+        if os.path.exists(bib_path):
+            with open(bib_path) as f:
+                bib_content = f.read()
+            # Remove each deleted entry block
+            for key in deleted_bib_keys:
+                pattern = rf"@\w+\{{{re.escape(key)},.*?\n\}}\n?"
+                bib_content = re.sub(pattern, "", bib_content, flags=re.DOTALL)
+            with open(bib_path, "w") as f:
+                f.write(bib_content.strip() + "\n")
 
     # Remove from state entries and processed_files
     state["entries"] = [e for e in state["entries"] if e.get("file_path") not in deleted]
@@ -478,7 +504,7 @@ def cmd_apply(folder: str, project: str, assignments_path: str):
         source = item["source"]
         entry_type = item.get("type", "Journal Article")
         streams = item.get("streams", [])
-        streams_str = ", ".join(streams)
+        streams_str = " | ".join(streams)
 
         new_filename = make_filename(title, authors, year, source, number=next_number)
         next_number += 1
@@ -547,8 +573,83 @@ def cmd_apply(folder: str, project: str, assignments_path: str):
     print(f"BibTeX: {os.path.join(folder, project + '_literature.bib')}")
 
 
+def create_stream_sheet(wb, stream_name: str):
+    """Create a new sheet for a stream with the same header formatting as the main sheet."""
+    # Truncate sheet name to 31 chars (Excel limit)
+    sheet_title = stream_name[:31]
+    if sheet_title in wb.sheetnames:
+        return wb[sheet_title]
+
+    ws = wb.create_sheet(title=sheet_title)
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    for col_idx, col_name in enumerate(SPREADSHEET_COLUMNS, 1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        cell.border = thin_border
+
+    widths = {
+        "A": 35, "B": 25, "C": 8, "D": 25, "E": 15, "F": 20,
+        "G": 30, "H": 20, "I": 35, "J": 20, "K": 20, "L": 15,
+        "M": 15, "N": 25, "O": 20, "P": 40, "Q": 18, "R": 30,
+        "S": 12, "T": 25,
+    }
+    for col_letter, width in widths.items():
+        ws.column_dimensions[col_letter].width = width
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = "A1:T1"
+    return ws
+
+
+def rebuild_stream_sheets(wb, main_ws):
+    """Remove old stream sheets and rebuild from the main sheet's stream assignments."""
+    # Remove all sheets except the main one
+    main_title = main_ws.title
+    for name in wb.sheetnames:
+        if name != main_title:
+            del wb[name]
+
+    # Collect all streams and their rows from the main sheet
+    stream_rows = {}  # stream_name -> list of row data
+    for row in range(2, main_ws.max_row + 1):
+        streams_val = main_ws.cell(row=row, column=6).value
+        if not streams_val:
+            continue
+        # Skip deleted rows
+        notes = main_ws.cell(row=row, column=20).value or ""
+        if "DELETED" in notes:
+            continue
+        row_data = []
+        for col in range(1, len(SPREADSHEET_COLUMNS) + 1):
+            row_data.append(main_ws.cell(row=row, column=col).value)
+        for stream in [s.strip() for s in streams_val.split(" | ") if s.strip()]:
+            if stream not in stream_rows:
+                stream_rows[stream] = []
+            stream_rows[stream].append(row_data)
+
+    # Create a sheet per stream and populate
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    for stream_name, rows in sorted(stream_rows.items()):
+        ws = create_stream_sheet(wb, stream_name)
+        for i, row_data in enumerate(rows, 2):
+            for col_idx, val in enumerate(row_data, 1):
+                cell = ws.cell(row=i, column=col_idx, value=val)
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                cell.border = thin_border
+        print(f"  Sheet '{stream_name[:31]}': {len(rows)} papers")
+
+
 def cmd_apply_streams(folder: str, project: str, streams_path: str):
-    """Apply stream classifications: update spreadsheet column and create symlink folders."""
+    """Apply stream classifications: update spreadsheet column, create symlink folders and per-stream sheets."""
     with open(streams_path) as f:
         data = json.load(f)
 
@@ -596,6 +697,10 @@ def cmd_apply_streams(folder: str, project: str, streams_path: str):
             if entry.get("file_path") == file_path:
                 entry["streams"] = streams_str
                 break
+
+    # Rebuild per-stream sheets from the main sheet
+    print("\nBuilding per-stream sheets...")
+    rebuild_stream_sheets(wb, ws)
 
     wb.save(xlsx_path)
     save_state(folder, state)
