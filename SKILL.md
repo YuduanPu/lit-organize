@@ -130,6 +130,12 @@ When the user adds more PDFs and re-runs:
 
 Do NOT re-process previously organized files. Do NOT rename files that are already in the state file.
 
+**Deletion detection**: Every scan automatically checks whether previously processed PDFs still exist on disk. If a file was deleted:
+- Its spreadsheet row is marked "DELETED" in the Notes column (preserving all other data)
+- Its entry is removed from the state file so the number gap remains
+- Dangling symlinks in stream folders are cleaned up
+- Numbering is NOT renumbered — gaps are left as-is
+
 ## Spreadsheet columns
 
 | Column                    | Description                                                                                        |

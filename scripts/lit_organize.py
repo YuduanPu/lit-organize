@@ -328,16 +328,67 @@ def append_to_bib(folder: str, project: str, bib_entry: str):
 # Main commands
 # ---------------------------------------------------------------------------
 
+def check_deletions(folder: str, project: str):
+    """Check for files that were deleted from disk and mark them in the spreadsheet."""
+    state = load_state(folder)
+    xlsx_path = os.path.join(folder, f"{project}_literature.xlsx")
+    if not os.path.exists(xlsx_path):
+        return []
+
+    deleted = []
+    for entry in state.get("entries", []):
+        fp = entry.get("file_path", "")
+        if fp and not os.path.exists(os.path.join(folder, fp)):
+            deleted.append(fp)
+
+    if not deleted:
+        return []
+
+    # Mark deleted in spreadsheet
+    wb = openpyxl.load_workbook(xlsx_path)
+    ws = wb.active
+    for row in range(2, ws.max_row + 1):
+        fp = ws.cell(row=row, column=18).value  # File Path column
+        if fp in deleted:
+            notes = ws.cell(row=row, column=20).value or ""
+            if "DELETED" not in notes:
+                ws.cell(row=row, column=20, value=f"DELETED. {notes}".strip())
+
+    wb.save(xlsx_path)
+
+    # Remove from state entries and processed_files
+    state["entries"] = [e for e in state["entries"] if e.get("file_path") not in deleted]
+    state["processed_files"] = {k: v for k, v in state["processed_files"].items() if v not in deleted}
+    save_state(folder, state)
+
+    # Remove dangling symlinks in stream folders
+    for d in os.listdir(folder):
+        dpath = os.path.join(folder, d)
+        if os.path.isdir(dpath) and not d.startswith('.'):
+            for f in os.listdir(dpath):
+                link = os.path.join(dpath, f)
+                if os.path.islink(link) and not os.path.exists(link):
+                    os.unlink(link)
+
+    return deleted
+
+
 def cmd_scan(folder: str, project: str):
     """Scan for new PDFs and output metadata as JSON."""
+    # Check for deletions first
+    deleted = check_deletions(folder, project)
+
     state = load_state(folder)
     processed = set(state["processed_files"].keys())
 
     pdfs = sorted(Path(folder).glob("*.pdf"))
     new_pdfs = [p for p in pdfs if p.name not in processed and not p.is_symlink()]
 
+    if not new_pdfs and not deleted:
+        print(json.dumps({"new_files": [], "deleted_files": [], "message": "No new PDFs found."}))
+        return
     if not new_pdfs:
-        print(json.dumps({"new_files": [], "message": "No new PDFs found."}))
+        print(json.dumps({"new_files": [], "deleted_files": deleted, "message": f"No new PDFs. {len(deleted)} deleted files marked."}))
         return
 
     results = []
@@ -377,6 +428,7 @@ def cmd_scan(folder: str, project: str):
     output = {
         "new_files": results,
         "duplicates": duplicates,
+        "deleted_files": deleted,
         "project": project,
         "folder": folder,
     }
